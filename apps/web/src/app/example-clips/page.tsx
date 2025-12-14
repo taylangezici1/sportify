@@ -1,0 +1,70 @@
+"use client";
+
+import ClipList from "@/components/ClipList";
+
+// Hardcoded clips extracted from database
+const exampleClips = [
+  {
+    "id": "cmj4vh7nd0002j7esz5nhr13j",
+    "trackUri": "spotify:track:4Ku3OOZWR4tpKNCVFXILY8",
+    "trackName": "You Only Live Once",
+    "startTime": 0,
+    "endTime": 31662,
+    "createdAt": new Date("2025-12-13T22:33:30.361Z"),
+    "updatedAt": new Date("2025-12-13T22:33:30.361Z"),
+    "userId": "cmj4vh7n80000j7esazjql4hf"
+  },
+  {
+    "id": "cmj4vu9kt0004j7es6j3j8jxi",
+    "trackUri": "spotify:track:2ptvMNky2NB76kLNmjBVL3",
+    "trackName": "Hollow Bodies",
+    "startTime": 158683,
+    "endTime": 178682,
+    "createdAt": new Date("2025-12-13T22:43:39.390Z"),
+    "updatedAt": new Date("2025-12-13T22:43:39.390Z"),
+    "userId": "cmj4vh7n80000j7esazjql4hf"
+  },
+  {
+    "id": "cmj4w59kf0008j7es54ujpg1k",
+    "trackUri": "spotify:track:5cZqsjVs6MevCnAkasbEOX",
+    "trackName": "Break Stuff",
+    "startTime": 113619,
+    "endTime": 139056,
+    "createdAt": new Date("2025-12-13T22:52:12.592Z"),
+    "updatedAt": new Date("2025-12-13T22:52:12.592Z"),
+    "userId": "cmj4vh7n80000j7esazjql4hf"
+  },
+  {
+    "id": "cmj4w8n81000aj7esbhssj6aw",
+    "trackUri": "spotify:track:0xSqAGSCcElk8rsxD5NqSi",
+    "trackName": "Boykot",
+    "startTime": 70313,
+    "endTime": 87707,
+    "createdAt": new Date("2025-12-13T22:54:50.257Z"),
+    "updatedAt": new Date("2025-12-13T22:54:50.257Z"),
+    "userId": "cmj4vh7n80000j7esazjql4hf"
+  },
+  {
+    "id": "cmj4wbifg000cj7es7b4xbo2i",
+    "trackUri": "spotify:track:769cLRTw2y6KRdkFWFkxtu",
+    "trackName": "Domination",
+    "startTime": 223168,
+    "endTime": 277853,
+    "createdAt": new Date("2025-12-13T22:57:04.012Z"),
+    "updatedAt": new Date("2025-12-13T22:57:04.012Z"),
+    "userId": "cmj4vh7n80000j7esazjql4hf"
+  }
+];
+
+export default function ExampleClipsPage() {
+  return (
+    <main className="min-h-screen bg-neutral-900 text-white p-8">
+      <header className="mb-8">
+        <h1 className="text-3xl font-bold">Example Clips</h1>
+        <p className="text-neutral-400 mt-2">A collection of hardcoded example clips.</p>
+      </header>
+      
+      <ClipList clips={exampleClips} />
+    </main>
+  );
+}
