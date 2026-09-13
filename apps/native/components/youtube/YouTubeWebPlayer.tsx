@@ -172,8 +172,12 @@ const YouTubeWebPlayer = forwardRef<YouTubeWebPlayerHandle, Props>(function YouT
     [onReady, onStateChange, onError],
   );
 
-  // Keep the WebView on the player page; links inside the embed must not navigate it away.
-  const onShouldStartLoadWithRequest = useCallback((req: WebViewNavigation) => req.url.startsWith(PLAYER_PAGE), []);
+  // iOS runs this for iframe loads too (the YouTube embed itself), so only the
+  // top frame is pinned to the player page; sub-frames may load anything.
+  const onShouldStartLoadWithRequest = useCallback((req: WebViewNavigation & { isTopFrame?: boolean }) => {
+    if (req.isTopFrame === false) return true;
+    return req.url.startsWith(PLAYER_PAGE);
+  }, []);
 
   const userAgent = useMemo(() => (Platform.OS === "android" ? ANDROID_USER_AGENT : undefined), []);
 
