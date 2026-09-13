@@ -2,16 +2,38 @@
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
     "build": {
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
-      "dependsOn": ["^build"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*"
+      ],
+      "outputs": [
+        ".next/**",
+        "!.next/cache/**",
+        "dist/**"
+      ],
+      "dependsOn": [
+        "^build"
+      ]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": [
+        "^lint"
+      ]
     },
     "dev": {
       "cache": false,
       "persistent": true
     }
-  }
+  },
+  "globalEnv": [
+    "DATABASE_URL",
+    "DIRECT_URL",
+    "NEXTAUTH_URL",
+    "NEXTAUTH_SECRET",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "YOUTUBE_API_KEY",
+    "EXPO_PUBLIC_BACKEND_URL",
+    "VERCEL_URL"
+  ]
 }
