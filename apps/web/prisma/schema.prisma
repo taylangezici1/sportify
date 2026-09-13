@@ -4,8 +4,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooled connection (Neon: the "-pooler" host with ?pgbouncer=true)
+  directUrl = env("DIRECT_URL")   // direct connection, used by migrations
 }
 
 model Account {
@@ -17,6 +18,7 @@ model Account {
   refresh_token      String?  @db.Text
   access_token       String?  @db.Text
   expires_at         Int?
+  refresh_token_expires_in Int? // Google sends this; the adapter stores every token field
   token_type         String?
   scope              String?
   id_token           String?  @db.Text
@@ -46,6 +48,7 @@ model User {
   accounts      Account[]
   sessions      Session[]
   clips         Clip[]
+  apiTokens     ApiToken[]
   chillPlaylistId String?
 }
 
@@ -63,10 +66,27 @@ model Clip {
   trackName   String
   startTime   Int      // Start time in milliseconds
   endTime     Int      // End time in milliseconds
+  artist      String?  // Channel / artist name (YouTube)
+  imageUrl    String?  // Thumbnail URL
+  durationMs  Int?     // Full track length, for slider bounds without loading the video
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   userId      String
   user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+/// Long-lived bearer tokens minted for the mobile app after a browser sign-in.
+model ApiToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label      String?
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  lastUsedAt DateTime?
 
   @@index([userId])
 }

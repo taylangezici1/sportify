@@ -1,125 +1,39 @@
-
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-
-export async function POST(req: Request) {
-  console.log("API /api/clips HIT");
-  try {
-    let session = await getServerSession(authOptions);
-    let userEmail = session?.user?.email;
-
-    // Fallback: Check for Bearer token if no session (Native App)
-    if (!userEmail) {
-        const authHeader = req.headers.get('authorization');
-        if (authHeader?.startsWith('Bearer ')) {
-            const token = authHeader.split(' ')[1];
-            try {
-                // Verify token with Spotify
-                const spotifyRes = await fetch('https://api.spotify.com/v1/me', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (spotifyRes.ok) {
-                    const spotifyUser = await spotifyRes.json();
-                    userEmail = spotifyUser.email;
-                    console.log("Authenticated via Token:", userEmail);
-                }
-            } catch (e) {
-                console.error("Token verification failed", e);
-            }
-        }
-    }
-
-    if (!userEmail) {
-      console.log("Unauthorized access attempt");
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const body = await req.json();
-    const { trackUri, trackName, startTime, endTime } = body;
-
-    if (!trackUri || !trackName || startTime === undefined || endTime === undefined) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
-    }
-
-    // Ensure user exists in DB
-    // Use userEmail which is guaranteed to exist at this point
-    let user = await prisma.user.findUnique({
-      where: { email: userEmail },
-    });
-
-    if (!user) {
-        // If we found the email via Spotify token but no user exists, create one
-        // Note: We might lack name/image if coming from raw token unless we fetched it, 
-        // but for now we rely on email existence or session data if available.
-        // Fallback to email as name if session is null.
-      const name = session?.user?.name || userEmail.split('@')[0];
-      const image = session?.user?.image || "";
-        
-      user = await prisma.user.create({
-        data: {
-          email: userEmail,
-          name: name,
-          image: image,
-        },
-      });
-    }
-
-    const clip = await prisma.clip.create({
-      data: {
-        trackUri,
-        trackName,
-        startTime,
-        endTime,
-        userId: user.id,
-      },
-    });
-
-    return NextResponse.json(clip);
-  } catch (error) {
-    console.error("Error creating clip:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-  }
-}
+import { getOrCreateDbUser, getRequestUser } from "@/lib/request-user";
+import { parseClipBody } from "@/lib/api";
 
 export async function GET(req: Request) {
+  const user = await getRequestUser(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const dbUser = await prisma.user.findUnique({
+    where: { email: user.email },
+    include: { clips: { orderBy: { createdAt: "desc" } } },
+  });
+  return NextResponse.json(dbUser?.clips ?? []);
+}
+
+export async function POST(req: Request) {
+  const user = await getRequestUser(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  let body: Record<string, unknown>;
   try {
-    let session = await getServerSession(authOptions);
-    let userEmail = session?.user?.email;
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
-    if (!userEmail) {
-        const authHeader = req.headers.get('authorization');
-        if (authHeader?.startsWith('Bearer ')) {
-            const token = authHeader.split(' ')[1];
-            try {
-                const spotifyRes = await fetch('https://api.spotify.com/v1/me', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (spotifyRes.ok) {
-                    const spotifyUser = await spotifyRes.json();
-                    userEmail = spotifyUser.email;
-                }
-            } catch (e) {}
-        }
-    }
+  const parsed = parseClipBody(body);
+  if ("error" in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-    if (!userEmail) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: userEmail },
-      include: {
-        clips: {
-          orderBy: { createdAt: "desc" },
-        },
-      },
-    });
-
-    return NextResponse.json(user?.clips || []);
+  try {
+    const dbUser = await getOrCreateDbUser(user);
+    const clip = await prisma.clip.create({ data: { ...parsed, userId: dbUser.id } });
+    return NextResponse.json(clip, { status: 201 });
   } catch (error) {
-    console.error("Error fetching clips:", error);
+    console.error("Error creating clip:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

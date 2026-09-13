@@ -1,63 +1,106 @@
+"use client";
 
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { redirect } from "next/navigation";
-import { getPlaylist } from "@/lib/spotify";
-import Image from "next/image";
-import Link from "next/link";
-import TrackList from "@/components/TrackList";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import toast from "react-hot-toast";
+import type { PlaylistSummary, Track } from "@repo/ui";
+import { usePlayer } from "@/context/PlayerContext";
+import { api, ApiError } from "@/lib/client-api";
+import { formatTime } from "@/lib/format";
+import TrackList from "@/components/tracks/TrackList";
+import ClipperModal from "@/components/clips/ClipperModal";
+import { IconHeart, IconPlay, IconShuffle, IconSnowflake } from "@/components/ui/Icons";
+import { Button, EmptyState, Page, Spinner, Thumb } from "@/components/ui/primitives";
 
-export default async function PlaylistPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const session = await getServerSession(authOptions);
-  const { id } = await params;
+export default function PlaylistPage() {
+  const { id } = useParams<{ id: string }>();
+  const { playTracks, chillPlaylistId, setChillPlaylistId } = usePlayer();
+  type Loaded = { id: string; data?: { playlist: PlaylistSummary; tracks: Track[] }; error?: string };
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [clipping, setClipping] = useState<Track | null>(null);
 
-  if (!session) {
-    redirect("/api/auth/signin");
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    api.playlists
+      .get(decodeURIComponent(id))
+      .then((data) => !cancelled && setLoaded({ id, data }))
+      .catch((e) => !cancelled && setLoaded({ id, error: e instanceof ApiError ? e.message : "Could not load this playlist." }));
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  // State from a previous playlist id is stale while the new one loads.
+  const current = loaded?.id === id ? loaded : null;
+  const data = current?.data ?? null;
+  const error = current?.error ?? null;
+
+  if (error) {
+    return (
+      <Page>
+        <EmptyState title="Playlist unavailable" description={error} />
+      </Page>
+    );
+  }
+  if (!data) {
+    return (
+      <Page>
+        <Spinner label="Loading playlist" />
+      </Page>
+    );
   }
 
-  // @ts-ignore
-  const playlist = await getPlaylist(session.accessToken, id);
+  const { playlist, tracks } = data;
+  const isChill = playlist.id === chillPlaylistId;
+  const totalMs = tracks.reduce((sum, t) => sum + (t.durationMs ?? 0), 0);
 
   return (
-    <div className="min-h-screen bg-neutral-900 text-white p-8">
-      <Link href="/" className="text-neutral-400 hover:text-white mb-8 inline-block">
-        &larr; Back to Dashboard
-      </Link>
-
-      <div className="flex flex-col md:flex-row gap-8 mb-8">
-        <div className="relative w-64 h-64 shrink-0 shadow-2xl">
-          {playlist.images?.[0]?.url ? (
-            <Image
-              src={playlist.images[0].url}
-              alt={playlist.name}
-              fill
-              className="object-cover rounded-md"
-            />
-          ) : (
-            <div className="w-full h-full bg-neutral-800 flex items-center justify-center rounded-md">
-              <span className="text-neutral-400">No Image</span>
-            </div>
-          )}
-        </div>
-        <div className="flex flex-col justify-end">
-          <h1 className="text-4xl md:text-6xl font-bold mb-4">{playlist.name}</h1>
-          <p className="text-neutral-400">{playlist.description}</p>
-          <p className="text-neutral-400 mt-2">
-            {playlist.tracks.total} Tracks
+    <Page>
+      <header className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end">
+        {playlist.id === "LM" ? (
+          <div className="flex aspect-video w-full items-center justify-center rounded-2xl bg-linear-to-br from-[#3b1f5e] to-[#1a1a2e] text-white shadow-xl sm:w-64">
+            <IconHeart size={48} fill="currentColor" />
+          </div>
+        ) : (
+          <Thumb src={playlist.imageUrl} alt="" className="aspect-video w-full shadow-xl sm:w-64" rounded="rounded-2xl" />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold uppercase tracking-wider text-muted">Playlist</p>
+          <h1 className="mt-1 line-clamp-2 text-3xl font-black tracking-tight md:text-4xl">{playlist.title}</h1>
+          <p className="mt-1 text-sm text-muted">
+            {playlist.owner ? `${playlist.owner} · ` : ""}
+            {tracks.length} tracks{totalMs > 0 ? ` · ${formatTime(totalMs)}` : ""}
           </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="primary" icon={<IconPlay size={16} />} disabled={!tracks.length} onClick={() => playTracks(tracks)}>
+              Play
+            </Button>
+            <Button icon={<IconShuffle size={16} />} disabled={!tracks.length} onClick={() => playTracks(tracks, { shuffle: true })}>
+              Shuffle
+            </Button>
+            <Button
+              variant={isChill ? "chill" : "secondary"}
+              icon={<IconSnowflake size={16} />}
+              onClick={async () => {
+                if (isChill) return;
+                await setChillPlaylistId(playlist.id);
+                toast.success(`${playlist.title} is now your chill playlist`);
+              }}
+            >
+              {isChill ? "Chill playlist" : "Use for chill"}
+            </Button>
+          </div>
         </div>
-      </div>
+      </header>
 
-      <TrackList 
-        tracks={playlist.tracks.items.map((item: any) => item.track)} 
-        // @ts-ignore
-        accessToken={session.accessToken}
-      />
-    </div>
+      {tracks.length === 0 ? (
+        <EmptyState title="No playable tracks" description="Every video in this playlist is private, deleted or not embeddable." />
+      ) : (
+        <TrackList tracks={tracks} onClip={setClipping} queueAll numbered />
+      )}
+
+      {clipping && <ClipperModal track={clipping} onClose={() => setClipping(null)} />}
+    </Page>
   );
 }
-

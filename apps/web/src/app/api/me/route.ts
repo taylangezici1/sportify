@@ -1,76 +1,36 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getOrCreateDbUser, getRequestUser } from "@/lib/request-user";
 
-export async function GET() {
-  let session = await getServerSession(authOptions);
-  let userEmail = session?.user?.email;
+export async function GET(req: Request) {
+  const user = await getRequestUser(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (!userEmail) {
-      const headersList = await (await import('next/headers')).headers();
-      const authHeader = headersList.get('authorization');
-      
-      if (authHeader?.startsWith('Bearer ')) {
-          const token = authHeader.split(' ')[1];
-          try {
-              const spotifyRes = await fetch('https://api.spotify.com/v1/me', {
-                  headers: { 'Authorization': `Bearer ${token}` }
-              });
-              if (spotifyRes.ok) {
-                  const spotifyUser = await spotifyRes.json();
-                  userEmail = spotifyUser.email;
-              }
-          } catch (e) {}
-      }
-  }
-
-  if (!userEmail) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { email: userEmail },
-    select: { chillPlaylistId: true },
+  const dbUser = await prisma.user.findUnique({
+    where: { email: user.email },
+    select: { chillPlaylistId: true, name: true, image: true, email: true },
   });
-
-  return NextResponse.json(user || {});
+  return NextResponse.json(dbUser ?? { chillPlaylistId: null });
 }
 
 export async function PUT(req: Request) {
-  let session = await getServerSession(authOptions);
-  let userEmail = session?.user?.email;
-
-  if (!userEmail) {
-      const authHeader = req.headers.get('authorization');
-      if (authHeader?.startsWith('Bearer ')) {
-          const token = authHeader.split(' ')[1];
-          try {
-              const spotifyRes = await fetch('https://api.spotify.com/v1/me', {
-                  headers: { 'Authorization': `Bearer ${token}` }
-              });
-              if (spotifyRes.ok) {
-                  const spotifyUser = await spotifyRes.json();
-                  userEmail = spotifyUser.email;
-              }
-          } catch (e) {}
-      }
-  }
-
-  if (!userEmail) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const user = await getRequestUser(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const { chillPlaylistId } = await req.json();
-
-    const user = await prisma.user.update({
-        where: { email: userEmail },
-        data: { chillPlaylistId },
+    if (chillPlaylistId !== null && typeof chillPlaylistId !== "string") {
+      return NextResponse.json({ error: "chillPlaylistId must be a string or null" }, { status: 400 });
+    }
+    const dbUser = await getOrCreateDbUser(user);
+    const updated = await prisma.user.update({
+      where: { id: dbUser.id },
+      data: { chillPlaylistId },
+      select: { chillPlaylistId: true },
     });
-
-    return NextResponse.json(user);
+    return NextResponse.json(updated);
   } catch (error) {
+    console.error("Failed to update profile", error);
     return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
   }
 }

@@ -1,91 +1,98 @@
-import { NextAuthOptions } from "next-auth";
-import SpotifyProvider from "next-auth/providers/spotify";
+import type { NextAuthOptions } from "next-auth";
+import type { JWT } from "next-auth/jwt";
+import GoogleProvider from "next-auth/providers/google";
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
+import { refreshGoogleAccessToken } from "@/lib/google-tokens";
 
-const scope = "user-read-email user-read-private playlist-read-private playlist-modify-public playlist-modify-private user-read-playback-state user-modify-playback-state streaming user-library-read user-library-modify";
+/**
+ * Google sign-in with YouTube read access.
+ *
+ * `youtube.readonly` is what lets us list the signed-in user's YouTube Music
+ * playlists (including "Liked Music"). Everything else (search, public
+ * playlists, video details) works with the plain API key as a fallback.
+ */
+export const GOOGLE_SCOPES = [
+  "openid",
+  "email",
+  "profile",
+  "https://www.googleapis.com/auth/youtube.readonly",
+].join(" ");
 
-async function refreshAccessToken(token: any) {
+const REFRESH_SKEW_MS = 60_000;
+
+async function refreshGoogleToken(token: JWT): Promise<JWT> {
+  if (!token.refreshToken) return { ...token, error: "RefreshAccessTokenError" };
   try {
-    const url = "https://accounts.spotify.com/api/token";
-    const basicAuth = Buffer.from(`${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`).toString('base64');
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: token.refreshToken,
-      }),
-    });
-
-    const refreshedTokens = await response.json();
-
-    if (!response.ok) {
-      throw refreshedTokens;
-    }
-
+    const fresh = await refreshGoogleAccessToken(token.refreshToken);
     return {
       ...token,
-      accessToken: refreshedTokens.access_token,
-      expiresAt: Date.now() + refreshedTokens.expires_in * 1000,
-      refreshToken: refreshedTokens.refresh_token ?? token.refreshToken, // Fallback to old refresh token
+      accessToken: fresh.accessToken,
+      expiresAt: fresh.expiresAt,
+      refreshToken: fresh.refreshToken ?? token.refreshToken,
+      error: undefined,
     };
   } catch (error) {
-    console.error("Error refreshing access token", error);
-    return {
-      ...token,
-      error: "RefreshAccessTokenError",
-    };
+    console.error("Failed to refresh Google access token", error);
+    return { ...token, error: "RefreshAccessTokenError" };
   }
 }
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
+  session: { strategy: "jwt" },
+  pages: { signIn: "/login" },
   providers: [
-    SpotifyProvider({
-      clientId: process.env.SPOTIFY_CLIENT_ID!,
-      clientSecret: process.env.SPOTIFY_CLIENT_SECRET!,
+    GoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
       authorization: {
-        params: { scope },
+        params: {
+          scope: GOOGLE_SCOPES,
+          // Needed to receive a refresh token so the session survives the
+          // one-hour Google access token lifetime.
+          access_type: "offline",
+          prompt: "consent",
+        },
       },
+      // Lets an existing user row (created under the old Spotify provider with
+      // the same e-mail) link to the Google account instead of failing.
       allowDangerousEmailAccountLinking: true,
     }),
   ],
   callbacks: {
-    async jwt({ token, account, user }) {
-      // Initial sign in
-      if (account && user) {
+    async jwt({ token, account, profile }) {
+      if (account) {
+        // Prefer the live Google profile over whatever the DB row holds (a
+        // user created in the Spotify era still carries a dead Spotify avatar).
+        const google = profile as { name?: string; picture?: string } | undefined;
+        if (google?.picture) token.picture = google.picture;
+        if (google?.name) token.name = google.name;
+        if (token.email && (google?.picture || google?.name)) {
+          prisma.user
+            .update({
+              where: { email: token.email },
+              data: { ...(google.picture ? { image: google.picture } : {}), ...(google.name ? { name: google.name } : {}) },
+            })
+            .catch(() => {});
+        }
         return {
           ...token,
           accessToken: account.access_token,
-          refreshToken: account.refresh_token,
-          expiresAt: (account.expires_at ?? 0) * 1000, // account.expires_at is usually in seconds
+          refreshToken: account.refresh_token ?? token.refreshToken,
+          expiresAt: (account.expires_at ?? 0) * 1000,
+          error: undefined,
         };
       }
-
-      // Return previous token if the access token has not expired yet
-      // Buffer of 5 minutes (300000ms)
-      if (Date.now() < (token.expiresAt as number) - 300000) {
+      if (token.expiresAt && Date.now() < token.expiresAt - REFRESH_SKEW_MS) {
         return token;
       }
-
-      // Access token has expired, try to update it
-      return refreshAccessToken(token);
+      return refreshGoogleToken(token);
     },
     async session({ session, token }) {
-      if (token) {
-        session.accessToken = token.accessToken as string;
-        // @ts-ignore
-        session.error = token.error;
-      }
+      session.accessToken = token.accessToken;
+      session.error = token.error;
       return session;
     },
-  },
-  session: {
-    strategy: "jwt",
   },
 };

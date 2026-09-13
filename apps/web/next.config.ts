@@ -1,24 +1,20 @@
 import type { NextConfig } from "next";
 
+// @repo/ui imports react-native for its tiny shared button; on the web that
+// resolves to react-native-web.
 const nextConfig: NextConfig = {
   transpilePackages: ["@repo/ui"],
-  webpack: (config) => {
-    config.resolve.alias = {
-      ...(config.resolve.alias || {}),
-      "react-native$": "react-native-web",
-    };
-    return config;
+  turbopack: {
+    resolveAlias: {
+      "react-native": "react-native-web",
+    },
   },
   images: {
     remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "**.scdn.co",
-      },
-      {
-        protocol: "https",
-        hostname: "**.spotifycdn.com",
-      },
+      { protocol: "https", hostname: "i.ytimg.com" },
+      { protocol: "https", hostname: "*.ytimg.com" },
+      { protocol: "https", hostname: "yt3.ggpht.com" },
+      { protocol: "https", hostname: "lh3.googleusercontent.com" },
     ],
   },
 };

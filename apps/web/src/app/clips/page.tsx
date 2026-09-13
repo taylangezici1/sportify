@@ -1,52 +1,126 @@
+"use client";
 
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { redirect } from "next/navigation";
-import { prisma } from "@/lib/prisma";
 import Link from "next/link";
-import ClipList from "@/components/ClipList";
+import { useCallback, useEffect, useState } from "react";
+import toast from "react-hot-toast";
+import type { Clip } from "@repo/ui";
+import { clipToTrack } from "@repo/ui";
+import { api, ApiError } from "@/lib/client-api";
+import { useModeActions } from "@/components/layout/useModeActions";
+import ClipsView from "@/components/clips/ClipsView";
+import ClipperModal from "@/components/clips/ClipperModal";
+import { IconFlame, IconScissors } from "@/components/ui/Icons";
+import { Button, EmptyState, Page, PageHeader, Spinner } from "@/components/ui/primitives";
 
-export default async function ClipsPage() {
-  const session = await getServerSession(authOptions);
+export default function ClipsPage() {
+  const [clips, setClips] = useState<Clip[] | null>(null);
+  const [editing, setEditing] = useState<Clip | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Clip | null>(null);
+  const { start, starting } = useModeActions();
 
-  if (!session || !session.user?.email) {
-    redirect("/api/auth/signin");
-  }
+  const load = useCallback(
+    () =>
+      api.clips
+        .list()
+        .then(setClips)
+        .catch((e) => {
+          toast.error(e instanceof ApiError ? e.message : "Could not load clips.");
+          setClips([]);
+        }),
+    [],
+  );
 
-  const user = await prisma.user.findUnique({
-    where: { email: session.user.email },
-    include: {
-      clips: {
-        orderBy: { createdAt: "desc" },
-      },
-    },
-  });
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const clips = user?.clips || [];
+  const confirmDelete = async () => {
+    const clip = pendingDelete;
+    if (!clip) return;
+    setPendingDelete(null);
+    setClips((c) => c?.filter((x) => x.id !== clip.id) ?? null);
+    try {
+      await api.clips.remove(clip.id);
+      toast.success("Clip deleted");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Could not delete the clip.");
+      void load();
+    }
+  };
 
   return (
-    <main className="min-h-screen bg-neutral-900 text-white p-8">
-      <header className="mb-8 flex justify-between items-center">
-        <h1 className="text-3xl font-bold">My Clips</h1>
-        <div className="flex items-center gap-4">
-          {session.user?.image && (
-            <img
-              src={session.user.image}
-              alt={session.user.name || "User"}
-              className="w-10 h-10 rounded-full border-2 border-green-500"
-            />
-          )}
-        </div>
-      </header>
+    <Page>
+      <PageHeader
+        title="Clips"
+        subtitle="Every clip plays from its start to its end, then the next one starts."
+        actions={
+          <>
+            <Link href="/search">
+              <Button icon={<IconScissors size={16} />}>New clip</Button>
+            </Link>
+            <Button
+              variant="workout"
+              icon={<IconFlame size={16} />}
+              loading={starting === "workout"}
+              onClick={() => start("workout", { force: true })}
+              disabled={!clips || clips.length === 0}
+            >
+              Shuffle all
+            </Button>
+          </>
+        }
+      />
 
-      {clips.length === 0 ? (
-        <div className="text-center text-neutral-400 mt-20">
-          <p className="text-xl">No clips yet.</p>
-          <p className="mt-2">Go to a playlist and create some clips!</p>
-        </div>
+      {clips === null ? (
+        <Spinner label="Loading clips" />
+      ) : clips.length === 0 ? (
+        <EmptyState
+          icon={<IconScissors size={40} />}
+          title="No clips yet"
+          description="Search for a track, hit Clip, drag the handles around the part you love, save."
+          action={
+            <Link href="/search">
+              <Button variant="primary">Go to search</Button>
+            </Link>
+          }
+        />
       ) : (
-        <ClipList clips={clips} />
+        <ClipsView clips={clips} onEdit={setEditing} onDelete={setPendingDelete} />
       )}
-    </main>
+
+      {editing && (
+        <ClipperModal
+          track={clipToTrack(editing)}
+          clip={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(saved) => setClips((c) => c?.map((x) => (x.id === saved.id ? saved : x)) ?? null)}
+        />
+      )}
+
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          onClick={() => setPendingDelete(null)}
+          role="alertdialog"
+          aria-modal
+          aria-label="Delete clip"
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-3xl border border-line bg-surface p-6 shadow-2xl">
+            <h2 className="text-lg font-bold">Delete this clip?</h2>
+            <p className="mt-1 text-sm text-muted">
+              <span className="font-semibold text-text">{pendingDelete.trackName}</span> will be removed. This cannot be undone.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setPendingDelete(null)} autoFocus>
+                Keep
+              </Button>
+              <Button variant="danger" onClick={confirmDelete}>
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Page>
   );
 }

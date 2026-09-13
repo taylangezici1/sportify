@@ -1,5 +1,6 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 export * from './types';
+export * from './format';
 
 interface ButtonProps {
   title?: string;

@@ -1,28 +1,19 @@
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { searchTracks } from "@/lib/spotify";
 import { NextResponse } from "next/server";
+import { getRequestUser } from "@/lib/request-user";
+import { searchTracks } from "@/lib/youtube";
+import { youtubeErrorResponse } from "@/lib/api";
 
-export async function GET(request: Request) {
-  const session = await getServerSession(authOptions);
+export async function GET(req: Request) {
+  const user = await getRequestUser(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { searchParams } = new URL(request.url);
-  const query = searchParams.get("q");
-
-  if (!query) {
-    return NextResponse.json({ error: "Missing query" }, { status: 400 });
-  }
+  const q = new URL(req.url).searchParams.get("q")?.trim();
+  if (!q) return NextResponse.json({ error: "Missing query" }, { status: 400 });
 
   try {
-    // @ts-ignore
-    const results = await searchTracks(session.accessToken, query);
-    return NextResponse.json(results);
+    const tracks = await searchTracks(q, { accessToken: user.accessToken });
+    return NextResponse.json({ tracks });
   } catch (error) {
-    console.error("Search error:", error);
-    return NextResponse.json({ error: "Failed to search tracks" }, { status: 500 });
+    return youtubeErrorResponse(error, "Search failed");
   }
 }
