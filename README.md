@@ -63,7 +63,7 @@ Copy `apps/web/.env.example` to `apps/web/.env`:
 | Variable               | Value                                                        |
 | ---------------------- | ------------------------------------------------------------ |
 | `DATABASE_URL`         | PostgreSQL connection string                                 |
-| `NEXTAUTH_URL`         | `http://localhost:3000`, or your ngrok URL for the phone app |
+| `NEXTAUTH_URL`         | `http://localhost:3000` locally; the Vercel domain in production |
 | `NEXTAUTH_SECRET`      | any long random string                                       |
 | `GOOGLE_CLIENT_ID`     | from step 4                                                  |
 | `GOOGLE_CLIENT_SECRET` | from step 4                                                  |
@@ -131,15 +131,33 @@ backend in the system browser; the web app signs you in as usual, mints a long-l
 token goes to the device keychain. For playlist calls the backend refreshes a Google access token from the
 refresh token NextAuth stored at web sign-in.
 
-### Run it
+### Run it (published, nothing on your PC)
 
-1. Google's callback must reach the backend from the phone, so expose it on https:
-   `ngrok http 3000`. A free static ngrok domain saves reconfiguring every run.
+The app is published with EAS Update and loads from Expo's servers, talking to the Vercel backend:
+
+1. Open **Expo Go** on the phone, signed in as the Expo account that owns the project.
+2. Home → Projects → **sportify** → open the **production** branch.
+3. Tap "Continue with Google". The browser opens `https://sportify-web-seven.vercel.app/mobile/login`,
+   signs you in and returns to the app with a device token. From then on it just opens.
+
+To ship a code change to the phone:
+
+```bash
+cd apps/native
+npx eas-cli update --branch production --environment production --message "what changed"
+```
+
+`apps/native/.env.production` (committed, no secrets) holds the backend URL that gets baked into the
+published bundle. Expo Go picks the new update up on the next launch.
+
+### Run it against a local backend (development)
+
+1. Expose the backend on https so Google can call back: `ngrok http 3000`.
 2. `apps/web/.env`: `NEXTAUTH_URL=https://<host>`; add `https://<host>/api/auth/callback/google` to the
    OAuth client in Google Cloud.
 3. `apps/native/.env`: `EXPO_PUBLIC_BACKEND_URL=https://<host>`.
 4. `yarn --cwd apps/web dev`, then in `apps/native`: `yarn expo login` once, `yarn start`, scan the QR code
-   with Expo Go (signed in to the same Expo account).
+   with Expo Go.
 
 Use `yarn expo …` rather than `npx expo …` in this repo: on Windows, npx mis-resolves the yarn workspace
 shim and fails with a `node_modules\node_modules\expo` path.
@@ -185,6 +203,16 @@ context/PlayerContext  playback state machine
 components/            PlayerStage, MiniPlayer, TransportControls, ProgressBar, RangeSlider, rows, ui primitives
 lib/api.ts             typed client for the backend; lib/theme.ts colour tokens; lib/config.ts env
 ```
+
+## Deployment
+
+- **Backend:** Vercel project with Root Directory `apps/web`. The build script runs `prisma generate`,
+  `prisma migrate deploy` and `next build`. Env vars: `DATABASE_URL` (Neon pooled string with
+  `&pgbouncer=true`), `DIRECT_URL` (Neon direct string, used by migrations), `NEXTAUTH_URL`,
+  `NEXTAUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `YOUTUBE_API_KEY`.
+- **Database:** Neon (PostgreSQL). Local Postgres is still handy for development.
+- **Phone app:** EAS Update, project `@taylangezici1/sportify`, branch `production`, runtime policy
+  `sdkVersion` so Expo Go can open it.
 
 ## Development notes
 

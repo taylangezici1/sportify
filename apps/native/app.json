@@ -48,6 +48,19 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "ce94ea4e-ce57-4ab3-b1d9-63656fd16821"
+      }
+    },
+    "owner": "taylangezici1",
+    "updates": {
+      "url": "https://u.expo.dev/ce94ea4e-ce57-4ab3-b1d9-63656fd16821"
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
     }
   }
 }

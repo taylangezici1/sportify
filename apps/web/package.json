@@ -7,8 +7,7 @@
     "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "prisma generate"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@next-auth/prisma-adapter": "^1.0.7",

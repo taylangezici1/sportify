@@ -44,3 +44,7 @@ app-example
 
 # keep the template
 !.env.example
+
+# published-update config (no secrets)
+!.env.example
+!.env.production
