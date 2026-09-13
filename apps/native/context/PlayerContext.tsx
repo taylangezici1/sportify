@@ -10,9 +10,9 @@ import React, {
   type RefObject,
 } from "react";
 import type { View } from "react-native";
-import type { YoutubeIframeRef } from "react-native-youtube-iframe";
 import type { Clip, PlaylistSummary, Track } from "@repo/ui";
 import { clamp, clipToTrack, shuffle, trackSource, youtubeVideoId } from "@repo/ui";
+import type { YouTubeErrorCode, YouTubeState, YouTubeWebPlayerHandle } from "@/components/youtube/YouTubeWebPlayer";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "./AuthContext";
 
@@ -20,7 +20,8 @@ import { useAuth } from "./AuthContext";
  * Playback state machine for the phone app. Mirrors apps/web's PlayerContext:
  * a queue of clips or tracks, workout / chill modes, a preview loop for the
  * clipper, and "stage slots" that say where the single YouTube WebView should
- * be drawn. The WebView itself lives in components/PlayerStage.
+ * be drawn. The WebView itself lives in components/PlayerStage and is driven
+ * through `playerRef`.
  */
 
 export type Mode = "workout" | "chill";
@@ -37,15 +38,7 @@ export interface StageSlot {
   coverUri?: string;
 }
 export type StartResult = { ok: true } | { ok: false; reason: "no-clips" | "no-playlist" | "error"; message?: string };
-export type PlayerEvent = "playing" | "paused" | "ended" | "buffering" | "cued" | "unstarted";
-
-/** What the stage renders; kept minimal so the WebView only re-renders on real changes. */
-export interface StageState {
-  videoId: string | undefined;
-  play: boolean;
-  volume: number;
-  muted: boolean;
-}
+export type PlayerEvent = YouTubeState;
 
 export interface PlayerContextValue {
   status: Status;
@@ -88,12 +81,11 @@ export interface PlayerContextValue {
   setPreviewRange: (range: Range | null) => void;
 
   // Stage plumbing
-  stage: StageState;
   stageSlot: StageSlot | null;
-  playerRef: RefObject<YoutubeIframeRef | null>;
+  playerRef: RefObject<YouTubeWebPlayerHandle | null>;
   pushStageSlot: (slot: StageSlot) => () => void;
   onPlayerEvent: (event: PlayerEvent) => void;
-  onPlayerError: (error: string) => void;
+  onPlayerError: (error: YouTubeErrorCode) => void;
   onPlayerReady: () => void;
 }
 
@@ -108,16 +100,22 @@ function itemRange(item: QueueItem | null): Range | null {
   if (!item || item.kind !== "clip") return null;
   return { start: item.clip.startTime, end: item.clip.endTime };
 }
-function describeError(code: string): string {
-  if (code === "embed_not_allowed") return "The video owner does not allow this video to be embedded.";
-  if (code === "video_not_found") return "This video was removed or is private.";
-  if (code === "invalid_parameter") return "Invalid video id.";
-  return "YouTube could not play this video.";
+function describeError(code: YouTubeErrorCode): string {
+  switch (code) {
+    case "embed_not_allowed":
+      return "The video owner does not allow this video to be embedded.";
+    case "video_not_found":
+      return "This video was removed or is private.";
+    case "invalid_parameter":
+      return "Invalid video id.";
+    default:
+      return "YouTube could not play this video.";
+  }
 }
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const { status: authStatus, user } = useAuth();
-  const playerRef = useRef<YoutubeIframeRef | null>(null);
+  const playerRef = useRef<YouTubeWebPlayerHandle | null>(null);
 
   const [status, setStatus] = useState<Status>("idle");
   const [buffering, setBuffering] = useState(false);
@@ -134,7 +132,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(false);
   const [stageSlots, setStageSlots] = useState<StageSlot[]>([]);
-  const [stage, setStage] = useState<StageState>({ videoId: undefined, play: false, volume: 100, muted: false });
 
   const queueRef = useRef<QueueItem[]>([]);
   const indexRef = useRef(-1);
@@ -142,12 +139,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const previewRef = useRef<Range | null>(null);
   const statusRef = useRef<Status>("idle");
   const shuffleRef = useRef(false);
-  // Seek requested for a freshly loaded video: issued once on "playing",
-  // then verified once by the poller (a second seek if YouTube ignored it).
-  const pendingSeekRef = useRef<number | null>(null);
-  const verifySeekRef = useRef<number | null>(null);
+  const loadedVideoRef = useRef<string | null>(null);
+  const mutedRef = useRef(false);
   const chillCacheRef = useRef<{ id: string; tracks: Track[] } | null>(null);
-  const playerReadyRef = useRef(false);
 
   const setIsShuffle = useCallback((v: boolean) => {
     shuffleRef.current = v;
@@ -167,25 +161,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (authStatus !== "signedOut") return;
     queueRef.current = [];
     indexRef.current = -1;
+    loadedVideoRef.current = null;
     setQueue([]);
     setQueueIndex(-1);
     setPlaylists([]);
     chillCacheRef.current = null;
     applyStatus("idle");
-    setStage((s) => ({ ...s, videoId: undefined, play: false }));
+    playerRef.current?.pause();
   }, [authStatus, applyStatus]);
 
   // ---------------------------------------------------------------------
-  // Loading items into the WebView player
+  // Loading items into the player
   // ---------------------------------------------------------------------
-  const seekPlayer = useCallback((ms: number) => {
-    playerRef.current?.seekTo(Math.max(0, ms / 1000), true);
-  }, []);
-
   const loadItemAt = useCallback(
     (index: number, opts?: { startMs?: number }) => {
       const item = queueRef.current[index];
-      if (!item) return;
+      const player = playerRef.current;
+      if (!item || !player) return;
       const track = itemTrack(item)!;
       const videoId = youtubeVideoId(track.uri);
       if (!videoId) {
@@ -196,49 +188,41 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setQueueIndex(index);
       const range = itemRange(item);
       const startMs = opts?.startMs ?? range?.start ?? 0;
-      pendingSeekRef.current = startMs > 500 ? startMs : null;
       setPosition(startMs);
       setDuration(track.durationMs ?? 0);
       setLastError(null);
       applyStatus("loading");
       setBuffering(true);
-      setStage((s) => {
-        // Same video again: the WebView will not reload, so seek directly.
-        if (s.videoId === videoId) {
-          seekPlayer(startMs);
-          pendingSeekRef.current = null;
-          return { ...s, play: true };
-        }
-        return { ...s, videoId, play: true };
+      loadedVideoRef.current = videoId;
+      // One call carries the window: YouTube buffers straight at the clip start
+      // and raises "ended" at the clip end on its own.
+      player.load(videoId, {
+        startSeconds: startMs / 1000,
+        endSeconds: range ? range.end / 1000 : undefined,
+        autoplay: true,
       });
     },
-    [applyStatus, seekPlayer],
+    [applyStatus],
   );
 
   const nextRef = useRef<() => void>(() => {});
 
   const onPlayerReady = useCallback(() => {
-    playerReadyRef.current = true;
+    playerRef.current?.setMuted(mutedRef.current);
   }, []);
 
   const onPlayerEvent = useCallback(
     (event: PlayerEvent) => {
+      const player = playerRef.current;
       switch (event) {
-        case "playing": {
+        case "playing":
           setBuffering(false);
           applyStatus("playing");
-          if (pendingSeekRef.current !== null) {
-            const target = pendingSeekRef.current;
-            pendingSeekRef.current = null;
-            verifySeekRef.current = target;
-            seekPlayer(target);
-          }
-          playerRef.current
+          player
             ?.getDuration()
-            .then((s) => s > 0 && setDuration(s * 1000))
+            .then((s) => Number.isFinite(s) && s > 0 && setDuration(s * 1000))
             .catch(() => {});
           break;
-        }
         case "paused":
           setBuffering(false);
           if (statusRef.current !== "loading") applyStatus("paused");
@@ -249,9 +233,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         case "ended": {
           setBuffering(false);
           const preview = previewRef.current;
-          if (preview) {
-            seekPlayer(preview.start);
-            setStage((s) => ({ ...s, play: true }));
+          if (preview && player) {
+            player.seekTo(preview.start / 1000);
+            player.play();
             return;
           }
           applyStatus("ended");
@@ -262,12 +246,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           break;
       }
     },
-    [applyStatus, seekPlayer],
+    [applyStatus],
   );
 
-  const onPlayerError = useCallback((error: string) => {
+  const onPlayerError = useCallback((code: YouTubeErrorCode) => {
     setBuffering(false);
-    setLastError(describeError(error));
+    setLastError(describeError(code));
     if (queueRef.current.length > 1) setTimeout(() => nextRef.current(), 800);
     else {
       statusRef.current = "idle";
@@ -276,7 +260,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ---------------------------------------------------------------------
-  // Position polling and clip boundary enforcement
+  // Position polling, clip boundary fallback, clipper preview loop
   // ---------------------------------------------------------------------
   useEffect(() => {
     if (status !== "playing") return;
@@ -284,38 +268,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const tick = async () => {
       const player = playerRef.current;
       if (!player) return;
-      let pos: number;
-      try {
-        pos = (await player.getCurrentTime()) * 1000;
-      } catch {
-        return;
-      }
-      if (cancelled) return;
-
-      const verify = verifySeekRef.current;
-      if (verify !== null) {
-        verifySeekRef.current = null;
-        if (Math.abs(pos - verify) > 2000) {
-          seekPlayer(verify);
-          return;
-        }
-      }
+      const seconds = await player.getCurrentTime().catch(() => NaN);
+      if (cancelled || !Number.isFinite(seconds)) return;
+      const pos = seconds * 1000;
       setPosition(pos);
 
       const preview = previewRef.current;
       if (preview) {
-        if (pos >= preview.end || pos < preview.start - 1500) seekPlayer(preview.start);
+        if (pos >= preview.end || pos < preview.start - 1500) player.seekTo(preview.start / 1000);
         return;
       }
       const range = itemRange(queueRef.current[indexRef.current] ?? null);
-      if (range && pos >= range.end) nextRef.current();
+      if (range && pos >= range.end + 250) nextRef.current();
     };
     const id = setInterval(() => void tick(), POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [status, seekPlayer]);
+  }, [status]);
 
   // ---------------------------------------------------------------------
   // Queue operations
@@ -383,18 +354,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const q = queueRef.current;
     if (!q.length) return;
     const start = itemRange(q[indexRef.current] ?? null)?.start ?? 0;
-    playerRef.current
-      ?.getCurrentTime()
+    const goBack = () => loadItemAt(indexRef.current - 1 < 0 ? q.length - 1 : indexRef.current - 1);
+    const player = playerRef.current;
+    if (!player) return goBack();
+    player
+      .getCurrentTime()
       .then((s) => {
-        if (s * 1000 - start > 3000) {
-          seekPlayer(start);
+        // Like most players: restart the current item unless we're near its start.
+        if (Number.isFinite(s) && s * 1000 - start > 3000) {
+          player.seekTo(start / 1000);
           setPosition(start);
         } else {
-          loadItemAt(indexRef.current - 1 < 0 ? q.length - 1 : indexRef.current - 1);
+          goBack();
         }
       })
-      .catch(() => loadItemAt(indexRef.current - 1 < 0 ? q.length - 1 : indexRef.current - 1));
-  }, [loadItemAt, seekPlayer]);
+      .catch(goBack);
+  }, [loadItemAt]);
 
   const toggleShuffle = useCallback(() => {
     const was = shuffleRef.current;
@@ -420,41 +395,40 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // ---------------------------------------------------------------------
   // Transport
   // ---------------------------------------------------------------------
-  const pause = useCallback(() => setStage((s) => ({ ...s, play: false })), []);
+  const pause = useCallback(() => playerRef.current?.pause(), []);
   const resume = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
     if (statusRef.current === "ended") {
-      seekPlayer(itemRange(queueRef.current[indexRef.current] ?? null)?.start ?? 0);
+      player.seekTo((itemRange(queueRef.current[indexRef.current] ?? null)?.start ?? 0) / 1000);
     }
-    setStage((s) => ({ ...s, play: true }));
-  }, [seekPlayer]);
+    player.play();
+  }, []);
   const togglePlay = useCallback(() => {
     if (statusRef.current === "playing" || statusRef.current === "loading") pause();
     else resume();
   }, [pause, resume]);
 
-  const seek = useCallback(
-    (ms: number) => {
-      const range = previewRef.current ?? itemRange(queueRef.current[indexRef.current] ?? null);
-      const target = range ? clamp(ms, range.start, range.end) : Math.max(0, ms);
-      pendingSeekRef.current = null;
-      verifySeekRef.current = null;
-      seekPlayer(target);
-      setPosition(target);
-    },
-    [seekPlayer],
-  );
+  const seek = useCallback((ms: number) => {
+    const range = previewRef.current ?? itemRange(queueRef.current[indexRef.current] ?? null);
+    const target = range ? clamp(ms, range.start, range.end) : Math.max(0, ms);
+    playerRef.current?.seekTo(target / 1000);
+    setPosition(target);
+  }, []);
 
   const setVolume = useCallback((v: number) => {
     const vol = clamp(Math.round(v), 0, 100);
     setVolumeState(vol);
+    mutedRef.current = false;
     setMuted(false);
-    setStage((s) => ({ ...s, volume: vol, muted: false }));
+    playerRef.current?.setVolume(vol);
+    playerRef.current?.setMuted(false);
   }, []);
   const toggleMute = useCallback(() => {
-    setMuted((m) => {
-      setStage((s) => ({ ...s, muted: !m }));
-      return !m;
-    });
+    const m = !mutedRef.current;
+    mutedRef.current = m;
+    setMuted(m);
+    playerRef.current?.setMuted(m);
   }, []);
 
   const setPreviewRange = useCallback((range: Range | null) => {
@@ -559,7 +533,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       toggleMute,
       setPreviewRange,
-      stage,
       stageSlot,
       playerRef,
       pushStageSlot,
@@ -602,7 +575,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setVolume,
       toggleMute,
       setPreviewRange,
-      stage,
       stageSlot,
       pushStageSlot,
       onPlayerEvent,

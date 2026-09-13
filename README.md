@@ -168,17 +168,16 @@ Free ngrok shows a "you are about to visit" page the first time the phone browse
 
 ```
 context/PlayerContext   same state machine as the web (queue, modes, preview loop, 250 ms position poller)
-components/PlayerStage  the single YouTube WebView (react-native-youtube-iframe), positioned over the active
-                        slot View; slots come from useStageSlot(ref) in MiniPlayer, player.tsx, clipping.tsx
+components/PlayerStage  the single YouTube WebView (components/youtube/YouTubeWebPlayer), positioned over the
+                        active slot View; slots come from useStageSlot(ref) in MiniPlayer, player.tsx, clipping.tsx
 ```
 
 Three details worth knowing:
 
-- The page the player library loads only reports events and has no handler for the commands behind its
-  `play` / `mute` / `volume` props, so pause never reached YouTube. `PlayerStage` injects a small message
-  handler into that page after load; play, pause, mute and volume work through it.
-- A newly loaded track is seeked to its start once, then the poller verifies the position a single time.
-  Re-seeking on every "playing" event caused a buffering loop.
+- `YouTubeWebPlayer` is our own small WebView player (derived from react-native-youtube-iframe, MIT). It
+  keeps that library's hosted player page, because YouTube rejects embeds without a real referrer, but drives
+  the page directly with injected JavaScript. Loads carry `startSeconds` / `endSeconds`, so a clip buffers
+  once at its start and YouTube raises "ended" at the clip end itself.
 - The mini player draws the track thumbnail over the live player, because YouTube's own overlay covers a
   78 × 44 px video. Playback keeps running underneath; the Now Playing screen shows the real video.
 
