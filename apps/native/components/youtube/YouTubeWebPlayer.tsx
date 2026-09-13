@@ -196,8 +196,8 @@ const YouTubeWebPlayer = forwardRef<YouTubeWebPlayerHandle, Props>(function YouT
         onMessage={onMessage}
         onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
         // The page never needs to reload; if it does (crash), commands queue until it is ready again.
-        onLoadStart={() => {
-          readyRef.current = false;
+        onLoadStart={(e) => {
+          if (e.nativeEvent.url?.startsWith(PLAYER_PAGE)) readyRef.current = false;
         }}
       />
     </View>
