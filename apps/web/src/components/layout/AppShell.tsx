@@ -12,7 +12,7 @@ import Sidebar from "./Sidebar";
 import MobileTabBar from "./MobileTabBar";
 
 // Rendered without the app chrome and without the signed-in redirect.
-const PUBLIC_PATHS = ["/login", "/mobile/login"];
+const PUBLIC_PATHS = ["/login", "/mobile/login", "/privacy"];
 
 function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
