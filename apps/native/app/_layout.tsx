@@ -1,46 +1,65 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import 'react-native-reanimated';
-import '../global.css'; // Import NativeWind styles
-import { useFonts, Lato_400Regular, Lato_700Bold } from '@expo-google-fonts/lato';
-import { useEffect } from 'react';
+import React, { useEffect } from "react";
+import { View } from "react-native";
+import { DarkTheme, Stack, ThemeProvider } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import { StatusBar } from "expo-status-bar";
+import { useFonts, Lato_400Regular, Lato_700Bold, Lato_900Black } from "@expo-google-fonts/lato";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { PlayerProvider } from "@/context/PlayerContext";
+import PlayerStage from "@/components/PlayerStage";
+import { colors } from "@/lib/theme";
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { PlayerProvider } from '../context/PlayerContext';
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
-
-export const unstable_settings = {
-  anchor: '(tabs)',
+const theme = {
+  ...DarkTheme,
+  colors: { ...DarkTheme.colors, background: colors.bg, card: colors.surface, border: colors.line, text: colors.text, primary: colors.text },
 };
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
-  const [loaded] = useFonts({
-    Lato_400Regular,
-    Lato_700Bold,
-  });
+function Routes() {
+  const { status } = useAuth();
+  const signedIn = status === "signedIn";
 
   useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
+    if (status !== "loading") SplashScreen.hideAsync().catch(() => {});
+  }, [status]);
 
-  if (!loaded) {
-    return null;
-  }
+  if (status === "loading") return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
 
   return (
-    <PlayerProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-        </Stack>
-      </ThemeProvider>
-    </PlayerProvider>
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
+      <Stack.Protected guard={signedIn}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="playlist/[id]" />
+        <Stack.Screen name="player" options={{ presentation: "modal" }} />
+        <Stack.Screen name="clipping" options={{ presentation: "modal", gestureEnabled: false }} />
+      </Stack.Protected>
+      <Stack.Protected guard={!signedIn}>
+        <Stack.Screen name="login" />
+      </Stack.Protected>
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  const [fontsLoaded] = useFonts({ Lato_400Regular, Lato_700Bold, Lato_900Black });
+  if (!fontsLoaded) return null;
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
+      <SafeAreaProvider>
+        <ThemeProvider value={theme}>
+          <AuthProvider>
+            <PlayerProvider>
+              <StatusBar style="light" />
+              <Routes />
+              <PlayerStage />
+            </PlayerProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
