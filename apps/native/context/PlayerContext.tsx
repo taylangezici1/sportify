@@ -58,6 +58,8 @@ export interface PlayerContextValue {
   muted: boolean;
   previewRange: Range | null;
   lastError: string | null;
+  /** Last player events, newest last. Shown on screen while playback is being debugged. */
+  eventTrail: string[];
 
   playlists: PlaylistSummary[];
   playlistsLoading: boolean;
@@ -129,6 +131,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [muted, setMuted] = useState(false);
   const [previewRange, setPreviewRangeState] = useState<Range | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [eventTrail, setEventTrail] = useState<string[]>([]);
+  const trace = useCallback((line: string) => {
+    const stamp = new Date().toISOString().slice(11, 19);
+    setEventTrail((t) => [...t.slice(-11), `${stamp} ${line}`]);
+  }, []);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(false);
   const [stageSlots, setStageSlots] = useState<StageSlot[]>([]);
@@ -140,6 +147,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const statusRef = useRef<Status>("idle");
   const shuffleRef = useRef(false);
   const loadedVideoRef = useRef<string | null>(null);
+  const autoplayKickRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mutedRef = useRef(false);
   const chillCacheRef = useRef<{ id: string; tracks: Track[] } | null>(null);
 
@@ -194,6 +202,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       applyStatus("loading");
       setBuffering(true);
       loadedVideoRef.current = videoId;
+      trace(`load ${videoId} @${(startMs / 1000).toFixed(1)}s${range ? ` to ${(range.end / 1000).toFixed(1)}s` : ""}`);
       // One call carries the window: YouTube buffers straight at the clip start
       // and raises "ended" at the clip end on its own.
       player.load(videoId, {
@@ -201,19 +210,29 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         endSeconds: range ? range.end / 1000 : undefined,
         autoplay: true,
       });
+      // If YouTube cues the video but does not start it (autoplay refused), press play once.
+      if (autoplayKickRef.current) clearTimeout(autoplayKickRef.current);
+      autoplayKickRef.current = setTimeout(() => {
+        if (statusRef.current === "loading" && loadedVideoRef.current === videoId) {
+          trace("no playing event after 4s: sending play");
+          playerRef.current?.play();
+        }
+      }, 4000);
     },
-    [applyStatus],
+    [applyStatus, trace],
   );
 
   const nextRef = useRef<() => void>(() => {});
 
   const onPlayerReady = useCallback(() => {
+    trace("player ready");
     playerRef.current?.setMuted(mutedRef.current);
-  }, []);
+  }, [trace]);
 
   const onPlayerEvent = useCallback(
     (event: PlayerEvent) => {
       const player = playerRef.current;
+      trace(`state ${event}`);
       switch (event) {
         case "playing":
           setBuffering(false);
@@ -246,18 +265,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           break;
       }
     },
-    [applyStatus],
+    [applyStatus, trace],
   );
 
   const onPlayerError = useCallback((code: YouTubeErrorCode) => {
     setBuffering(false);
+    trace(`error ${code}`);
     setLastError(describeError(code));
     if (queueRef.current.length > 1) setTimeout(() => nextRef.current(), 800);
     else {
       statusRef.current = "idle";
       setStatus("idle");
     }
-  }, []);
+  }, [trace]);
 
   // ---------------------------------------------------------------------
   // Position polling, clip boundary fallback, clipper preview loop
@@ -514,6 +534,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       muted,
       previewRange,
       lastError,
+      eventTrail,
       playlists,
       playlistsLoading,
       loadPlaylists,
@@ -556,6 +577,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       muted,
       previewRange,
       lastError,
+      eventTrail,
       playlists,
       playlistsLoading,
       loadPlaylists,

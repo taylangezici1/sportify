@@ -30,7 +30,7 @@ export default function ClippingScreen() {
   const existing = useMemo(() => parse<Clip>(params.clip), [params.clip]);
   const legacyId = params.legacy || null;
 
-  const { playTrack, setPreviewRange, position, duration, isPlaying, togglePlay, seek, pause, currentTrack } = usePlayer();
+  const { playTrack, setPreviewRange, position, duration, isPlaying, togglePlay, seek, pause, currentTrack, eventTrail } = usePlayer();
   const total = track?.durationMs || duration || 0;
 
   const [range, setRange] = useState(() => {
@@ -180,6 +180,9 @@ export default function ClippingScreen() {
             </View>
           ))}
         </View>
+        <Text style={styles.trail} selectable>
+          {eventTrail.join("\n")}
+        </Text>
       </ScrollView>
 
       <View style={styles.footer}>
@@ -216,4 +219,5 @@ const styles = StyleSheet.create({
   footer: { flexDirection: "row", alignItems: "center", gap: space.md, paddingHorizontal: space.lg, paddingVertical: space.md, borderTopWidth: 1, borderTopColor: colors.line },
   play: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.text, alignItems: "center", justifyContent: "center" },
   mono: { color: colors.muted, fontFamily: fonts.mono, fontSize: 12, fontVariant: ["tabular-nums"] },
+  trail: { color: colors.subtle, fontFamily: fonts.mono, fontSize: 10, marginTop: space.lg },
 });

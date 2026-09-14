@@ -25,7 +25,8 @@ function itemImage(item: QueueItem) {
 
 export default function PlayerScreen() {
   const router = useRouter();
-  const { isActive, currentTrack, activeClip, position, duration, seek, mode, queue, queueIndex, playQueueIndex, lastError } = usePlayer();
+  const { isActive, currentTrack, activeClip, position, duration, seek, mode, queue, queueIndex, playQueueIndex, lastError, eventTrail } =
+    usePlayer();
   const heroRef = useRef<View>(null);
   useStageSlot(heroRef, { interactive: true, enabled: isActive });
 
@@ -69,6 +70,9 @@ export default function PlayerScreen() {
                 {currentTrack.artist || "YouTube"}
               </Text>
               {lastError && <Text style={styles.error}>{lastError}</Text>}
+              <Text style={styles.trail} selectable>
+                {eventTrail.join("\n")}
+              </Text>
 
               <View style={{ marginTop: space.md }}>
                 <ProgressBar position={position} rangeStart={rangeStart} rangeEnd={rangeEnd} onSeek={seek} color={color} showTimes />
@@ -116,6 +120,7 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontFamily: fonts.black, fontSize: 22, lineHeight: 26, marginTop: 8 },
   artist: { color: colors.muted, fontFamily: fonts.regular, fontSize: 14, marginTop: 2 },
   error: { color: colors.danger, fontFamily: fonts.regular, fontSize: 12, marginTop: 6 },
+  trail: { color: colors.subtle, fontFamily: fonts.mono, fontSize: 10, marginTop: 6 },
   upNextHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", marginTop: space.xl, marginBottom: 6 },
   upNextTitle: { color: colors.muted, fontFamily: fonts.bold, fontSize: 11, letterSpacing: 1.5 },
   upNextCount: { color: colors.subtle, fontFamily: fonts.mono, fontSize: 11 },
