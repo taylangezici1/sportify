@@ -33,8 +33,10 @@ function Routes() {
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="playlist/[id]" />
-        <Stack.Screen name="player" options={{ presentation: "modal" }} />
-        <Stack.Screen name="clipping" options={{ presentation: "modal", gestureEnabled: false }} />
+        {/* Pushed (not native modals): iOS presents modals above the whole app, which
+            would hide the video stage that lives in this root layout. */}
+        <Stack.Screen name="player" options={{ animation: "slide_from_bottom", gestureDirection: "vertical" }} />
+        <Stack.Screen name="clipping" options={{ animation: "slide_from_bottom", gestureEnabled: false }} />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="login" />
